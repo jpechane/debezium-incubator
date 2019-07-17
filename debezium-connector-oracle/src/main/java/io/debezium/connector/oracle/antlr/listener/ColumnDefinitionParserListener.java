@@ -5,14 +5,17 @@
  */
 package io.debezium.connector.oracle.antlr.listener;
 
+import java.sql.Types;
+
 import io.debezium.antlr.DataTypeResolver;
 import io.debezium.ddl.parser.oracle.generated.PlSqlParser;
+import io.debezium.ddl.parser.oracle.generated.PlSqlParser.Inline_constraintContext;
+import io.debezium.ddl.parser.oracle.generated.PlSqlParser.Out_of_line_ref_constraintContext;
+import io.debezium.ddl.parser.oracle.generated.PlSqlParser.Unique_key_clauseContext;
 import io.debezium.relational.Column;
 import io.debezium.relational.ColumnEditor;
 import io.debezium.relational.TableEditor;
 import oracle.jdbc.OracleTypes;
-
-import java.sql.Types;
 
 /**
  * This class parses column definitions of Oracle statements.
@@ -52,6 +55,25 @@ public class ColumnDefinitionParserListener extends BaseParserListener {
         tableEditor.addColumn(columnEditor.create());
         tableEditor.setPrimaryKeyNames(columnEditor.name());
         super.enterPrimary_key_clause(ctx);
+    }
+
+    
+    @Override
+    public void enterUnique_key_clause(Unique_key_clauseContext ctx) {
+        System.err.println(columnEditor.name());
+        super.enterUnique_key_clause(ctx);
+    }
+
+    @Override
+    public void enterInline_constraint(Inline_constraintContext ctx) {
+        System.err.println(columnEditor.name());
+        super.enterInline_constraint(ctx);
+    }
+
+    @Override
+    public void enterOut_of_line_ref_constraint(Out_of_line_ref_constraintContext ctx) {
+        System.err.println(columnEditor.name());
+        super.enterOut_of_line_ref_constraint(ctx);
     }
 
     // todo use dataTypeResolver instead

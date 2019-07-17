@@ -199,6 +199,44 @@ public class OracleConnectorIT extends AbstractConnectorTest {
     }
 
     @Test
+    @FixFor("DBZ-923")
+    public void shouldStreamKeylessTable() throws Exception {
+        TestHelper.dropTable(connection, "debezium.keyless");
+        TestHelper.dropTable(connection, "debezium.uniquekey");
+
+        Configuration config = TestHelper.defaultConfig()
+                .with(OracleConnectorConfig.TABLE_WHITELIST, "ORCLPDB1\\.DEBEZIUM\\.KEYLESS,ORCLPDB1\\.DEBEZIUM\\.UNIQUEKEY")
+                .with(OracleConnectorConfig.SNAPSHOT_MODE, SnapshotMode.INITIAL)
+                .build();
+
+        connection.execute("CREATE TABLE debezium.keyless (id NUMBER(9) NOT NULL, aaa VARCHAR2(100))");
+        connection.execute("GRANT SELECT ON debezium.keyless to  " + TestHelper.CONNECTOR_USER);
+        connection.execute("ALTER TABLE debezium.keyless ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS");
+        connection.execute("INSERT INTO debezium.keyless VALUES (1, 'AAA')");
+//        connection.execute("CREATE TABLE debezium.uniquekey (id NUMBER(9) NOT NULL, aaa VARCHAR2(100), CONSTRAINT pk UNIQUE (id,aaa))");
+        connection.execute("CREATE TABLE debezium.uniquekey (id NUMBER(9) UNIQUE NOT NULL, aaa VARCHAR2(100))");
+        connection.execute("GRANT SELECT ON debezium.uniquekey to  " + TestHelper.CONNECTOR_USER);
+        connection.execute("ALTER TABLE debezium.uniquekey ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS");
+        connection.execute("INSERT INTO debezium.uniquekey VALUES (2, 'AAA')");
+        connection.execute("COMMIT");
+
+        start(OracleConnector.class, config);
+        assertConnectorIsRunning();
+
+        SourceRecords records = consumeRecordsByTopic(2);
+        List<SourceRecord> keyless = records.recordsForTopic("server1.DEBEZIUM.KEYLESS");
+        List<SourceRecord> uniqueKey = records.recordsForTopic("server1.DEBEZIUM.UNIQUEKEY");
+
+        assertThat(keyless).hasSize(1);
+        assertThat(keyless.get(0).key()).isNull();
+        assertThat(keyless.get(0).keySchema()).isNull();
+
+        assertThat(uniqueKey).hasSize(1);
+        assertThat(uniqueKey.get(0).key()).isNull();
+        assertThat(uniqueKey.get(0).keySchema()).isNull();
+    }
+
+    @Test
     @FixFor("DBZ-1223")
     public void shouldStreamTransaction() throws Exception {
         Configuration config = TestHelper.defaultConfig()
