@@ -1,0 +1,36 @@
+name: Build Debezium Incubator
+
+on: [push, pull_request]
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Pre Install Setup
+        run: |
+          sudo service mysql-5.6 stop || sudo service mysql stop
+          sudo /etc/init.d/postgresql stop
+      - name: Install and Setup Maven
+        run: |
+          wget https://archive.apache.org/dist/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip
+          unzip -qq apache-maven-3.6.3-bin.zip
+          export M2_HOME=$PWD/apache-maven-3.6.3
+          export PATH=$M2_HOME/bin:$PATH
+          mvn -version
+      - name: Cache local Maven repository
+        uses: actions/cache@v1
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+#  web-hooks:
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: actions/checkout@v2
+#      - uses: distributhor/workflow-webhook@v1
+#        with:
+#          webhook_url: ${{ secrets.WEBHOOK_URL }}
+
