@@ -7,13 +7,17 @@ package io.debezium.connector.cassandra;
 
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.stream.Collectors;
 
 import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.config.ConfigDef.Importance;
 import org.apache.kafka.common.config.ConfigDef.Type;
+import org.apache.kafka.common.config.ConfigDef.Width;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.connect.storage.Converter;
 
@@ -178,6 +182,13 @@ public class CassandraConnectorConfig extends CommonConnectorConfig {
             .withType(Type.BOOLEAN).withDefault(DEFAULT_COMMIT_LOG_POST_PROCESSING_ENABLED);
 
     /**
+     * Determine if CommitLogProcessor should re-process error commitLogFiles.
+     */
+    public static final boolean DEFAULT_COMMIT_LOG_ERROR_REPROCESSING_ENABLED = false;
+    public static final Field COMMIT_LOG_ERROR_REPROCESSING_ENABLED = Field.create("commit.log.error.reprocessing.enabled")
+            .withType(Type.BOOLEAN).withDefault(DEFAULT_COMMIT_LOG_ERROR_REPROCESSING_ENABLED);
+
+    /**
      * The fully qualified {@link CommitLogTransfer} class used to transfer commit logs.
      * The default option will delete all commit log files after processing (successful or otherwise).
      * You can extend a custom implementation.
@@ -234,7 +245,25 @@ public class CassandraConnectorConfig extends CommonConnectorConfig {
      * A comma-separated list of fully-qualified names of fields that should be excluded from change event message values.
      * Fully-qualified names for fields are in the form {@code <keyspace_name>.<field_name>.<nested_field_name>}.
      */
-    public static final Field FIELD_BLACKLIST = Field.create("field.blacklist").withType(Type.STRING);
+    public static final Field FIELD_EXCLUDE_LIST = Field.create("field.exclude.list")
+            .withDisplayName("Exclude Fields")
+            .withType(Type.STRING)
+            .withWidth(Width.LONG)
+            .withImportance(Importance.MEDIUM)
+            .withInvisibleRecommender()
+            .withDescription("Regular expressions matching fields to include in change events");
+
+    /**
+     * Old, backwards-compatible "blacklist" property.
+     */
+    @Deprecated
+    public static final Field FIELD_BLACKLIST = Field.create("field.blacklist")
+            .withDisplayName("Deprecated: Exclude Fields")
+            .withType(Type.STRING)
+            .withWidth(Width.LONG)
+            .withImportance(Importance.LOW)
+            .withInvisibleRecommender()
+            .withDescription("Regular expressions matching fields to include in change events (deprecated, use \"" + FIELD_EXCLUDE_LIST.name() + "\" instead)");
 
     /**
      * Instead of parsing commit logs from CDC directory, this will look for the commit log with the
@@ -345,6 +374,10 @@ public class CassandraConnectorConfig extends CommonConnectorConfig {
         return this.getConfig().getBoolean(COMMIT_LOG_POST_PROCESSING_ENABLED);
     }
 
+    public boolean errorCommitLogReprocessEnabled() {
+        return this.getConfig().getBoolean(COMMIT_LOG_ERROR_REPROCESSING_ENABLED);
+    }
+
     public CommitLogTransfer getCommitLogTransfer() {
         try {
             String clazz = this.getConfig().getString(COMMIT_LOG_TRANSFER_CLASS);
@@ -402,12 +435,12 @@ public class CassandraConnectorConfig extends CommonConnectorConfig {
         return Duration.ofMillis(ms);
     }
 
-    public String[] fieldBlacklist() {
-        String hosts = this.getConfig().getString(FIELD_BLACKLIST);
-        if (hosts == null) {
-            return new String[0];
+    public List<String> fieldExcludeList() {
+        String fieldExcludeList = this.getConfig().getFallbackStringProperty(FIELD_EXCLUDE_LIST, FIELD_BLACKLIST);
+        if (fieldExcludeList == null) {
+            return Collections.emptyList();
         }
-        return hosts.split(",");
+        return Arrays.asList(fieldExcludeList.split(","));
     }
 
     /**
@@ -469,5 +502,10 @@ public class CassandraConnectorConfig extends CommonConnectorConfig {
     @Override
     protected SourceInfoStructMaker<? extends AbstractSourceInfo> getSourceInfoStructMaker(Version version) {
         return new CassandraSourceInfoStructMaker(Module.name(), Module.version(), this);
+    }
+
+    @Override
+    public String getConnectorName() {
+        return Module.name();
     }
 }

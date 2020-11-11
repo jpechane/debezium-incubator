@@ -3,7 +3,7 @@
     <parent>
         <groupId>io.debezium</groupId>
         <artifactId>debezium-incubator-parent</artifactId>
-        <version>1.1.0-SNAPSHOT</version>
+        <version>1.4.0-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
     <modelVersion>4.0.0</modelVersion>
@@ -26,7 +26,7 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>com.oracle.instantclient</groupId>
+            <groupId>com.oracle.database.jdbc</groupId>
             <artifactId>ojdbc8</artifactId>
             <version>${version.oracle.driver}</version>
             <scope>provided</scope>
@@ -40,6 +40,11 @@
         <dependency>
               <groupId>org.antlr</groupId>
               <artifactId>antlr4-runtime</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.github.jsqlparser</groupId>
+            <artifactId>jsqlparser</artifactId>
+            <version>2.1</version>
         </dependency>
 
         <!-- Testing -->
@@ -80,6 +85,17 @@
             <artifactId>fest-assert</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- Required by VerifyRecord -->
         <dependency>
             <groupId>io.confluent</groupId>
@@ -87,6 +103,10 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <properties>
+        <adapter.name>xstream</adapter.name>
+    </properties>
 
     <build>
         <resources>
@@ -134,6 +154,9 @@
                     <enableAssertions>true</enableAssertions>
                     <forkCount>1</forkCount>
                     <argLine>-Djava.library.path=${instantclient.dir} -Ddebezium.embedded.shutdown.pause.before.interrupt.ms=20000</argLine>
+                    <systemPropertyVariables>
+                        <database.connection.adapter>${adapter.name}</database.connection.adapter>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
         </plugins>
@@ -173,12 +196,19 @@
                                     <descriptorRefs>
                                         <descriptorRef>connector-distribution</descriptorRef>
                                     </descriptorRefs>
+                                    <tarLongFileMode>posix</tarLongFileMode>
                                 </configuration>
                             </execution>
                         </executions>
                     </plugin>
                 </plugins>
             </build>
+        </profile>
+        <profile>
+            <id>logminer</id>
+            <properties>
+                <adapter.name>logminer</adapter.name>
+            </properties>
         </profile>
     </profiles>
 </project>

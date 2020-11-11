@@ -17,6 +17,7 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.debezium.connector.oracle.logminer.LogMinerHelper;
 import io.debezium.pipeline.EventDispatcher;
 import io.debezium.pipeline.source.spi.SnapshotProgressListener;
 import io.debezium.pipeline.source.spi.StreamingChangeEventSource;
@@ -78,12 +79,15 @@ public class OracleSnapshotChangeEventSource extends RelationalSnapshotChangeEve
     }
 
     @Override
-    protected Set<TableId> getAllTableIds(SnapshotContext ctx) throws Exception {
-        return jdbcConnection.readTableNames(ctx.catalogName, null, null, new String[]{ "TABLE" });
+    protected Set<TableId> getAllTableIds(RelationalSnapshotContext ctx) throws Exception {
+        return jdbcConnection.getAllTableIds(ctx.catalogName, connectorConfig.getSchemaName(), false);
+        // this very slow approach(commented out), it took 30 minutes on an instance with 600 tables
+        // return jdbcConnection.readTableNames(ctx.catalogName, null, null, new String[] {"TABLE"} );
     }
 
     @Override
-    protected void lockTablesForSchemaSnapshot(ChangeEventSourceContext sourceContext, SnapshotContext snapshotContext) throws SQLException, InterruptedException {
+    protected void lockTablesForSchemaSnapshot(ChangeEventSourceContext sourceContext, RelationalSnapshotContext snapshotContext)
+            throws SQLException, InterruptedException {
         ((OracleSnapshotContext) snapshotContext).preSchemaSnapshotSavepoint = jdbcConnection.connection().setSavepoint("dbz_schema_snapshot");
 
         try (Statement statement = jdbcConnection.connection().createStatement()) {
@@ -94,18 +98,18 @@ public class OracleSnapshotChangeEventSource extends RelationalSnapshotChangeEve
 
                 LOGGER.debug("Locking table {}", tableId);
 
-                statement.execute("LOCK TABLE " + tableId.schema() + "." + tableId.table() + " IN EXCLUSIVE MODE");
+                statement.execute("LOCK TABLE " + quote(tableId) + " IN EXCLUSIVE MODE");
             }
         }
     }
 
     @Override
-    protected void releaseSchemaSnapshotLocks(SnapshotContext snapshotContext) throws SQLException {
+    protected void releaseSchemaSnapshotLocks(RelationalSnapshotContext snapshotContext) throws SQLException {
         jdbcConnection.connection().rollback(((OracleSnapshotContext) snapshotContext).preSchemaSnapshotSavepoint);
     }
 
     @Override
-    protected void determineSnapshotOffset(SnapshotContext ctx) throws Exception {
+    protected void determineSnapshotOffset(RelationalSnapshotContext ctx) throws Exception {
         Optional<Long> latestTableDdlScn = getLatestTableDdlScn(ctx);
         long currentScn;
 
@@ -125,6 +129,10 @@ public class OracleSnapshotChangeEventSource extends RelationalSnapshotChangeEve
     }
 
     private long getCurrentScn(SnapshotContext ctx) throws SQLException {
+        if (connectorConfig.getAdapter().equals(OracleConnectorConfig.ConnectorAdapter.LOG_MINER)) {
+            return LogMinerHelper.getCurrentScn(jdbcConnection.connection());
+        }
+
         try (Statement statement = jdbcConnection.connection().createStatement();
                 ResultSet rs = statement.executeQuery("select CURRENT_SCN from V$DATABASE")) {
 
@@ -155,7 +163,7 @@ public class OracleSnapshotChangeEventSource extends RelationalSnapshotChangeEve
      * Returns the SCN of the latest DDL change to the captured tables. The result will be empty if there's no table to
      * capture as per the configuration.
      */
-    private Optional<Long> getLatestTableDdlScn(SnapshotContext ctx) throws SQLException {
+    private Optional<Long> getLatestTableDdlScn(RelationalSnapshotContext ctx) throws SQLException {
         if (ctx.capturedTables.isEmpty()) {
             return Optional.empty();
         }
@@ -178,10 +186,19 @@ public class OracleSnapshotChangeEventSource extends RelationalSnapshotChangeEve
 
             return Optional.of(rs.getLong(1));
         }
+        catch (SQLException e) {
+            if (e.getErrorCode() == 8180) {
+                // DBZ-1446 In this use case we actually do not want to propagate the exception but
+                // rather return an empty optional value allowing the current SCN to take prior.
+                LOGGER.info("No latest table SCN could be resolved, defaulting to current SCN");
+                return Optional.empty();
+            }
+            throw e;
+        }
     }
 
     @Override
-    protected void readTableStructure(ChangeEventSourceContext sourceContext, SnapshotContext snapshotContext) throws SQLException, InterruptedException {
+    protected void readTableStructure(ChangeEventSourceContext sourceContext, RelationalSnapshotContext snapshotContext) throws SQLException, InterruptedException {
         Set<String> schemas = snapshotContext.capturedTables.stream()
                 .map(TableId::schema)
                 .collect(Collectors.toSet());
@@ -194,6 +211,19 @@ public class OracleSnapshotChangeEventSource extends RelationalSnapshotChangeEve
                 throw new InterruptedException("Interrupted while reading structure of schema " + schema);
             }
 
+            // todo: DBZ-137 the new readSchemaForCapturedTables seems to cause failures.
+            // For now, reverted to the default readSchema implementation as the intended goal
+            // with the new implementation was to be faster, not change behavior.
+            // if (connectorConfig.getAdapter().equals(OracleConnectorConfig.ConnectorAdapter.LOG_MINER)) {
+            // jdbcConnection.readSchemaForCapturedTables(
+            // snapshotContext.tables,
+            // snapshotContext.catalogName,
+            // schema,
+            // connectorConfig.getColumnFilter(),
+            // false,
+            // snapshotContext.capturedTables);
+            // }
+            // else {
             jdbcConnection.readSchema(
                     snapshotContext.tables,
                     snapshotContext.catalogName,
@@ -201,11 +231,22 @@ public class OracleSnapshotChangeEventSource extends RelationalSnapshotChangeEve
                     connectorConfig.getTableFilters().dataCollectionFilter(),
                     null,
                     false);
+            // }
         }
     }
 
     @Override
-    protected SchemaChangeEvent getCreateTableEvent(SnapshotContext snapshotContext, Table table) throws SQLException {
+    protected String enhanceOverriddenSelect(RelationalSnapshotContext snapshotContext, String overriddenSelect, TableId tableId) {
+        long snapshotOffset = (Long) snapshotContext.offset.getOffset().get("scn");
+        String token = connectorConfig.getTokenToReplaceInSnapshotPredicate();
+        if (token != null) {
+            return overriddenSelect.replaceAll(token, " AS OF SCN " + snapshotOffset);
+        }
+        return overriddenSelect;
+    }
+
+    @Override
+    protected SchemaChangeEvent getCreateTableEvent(RelationalSnapshotContext snapshotContext, Table table) throws SQLException {
         try (Statement statement = jdbcConnection.connection().createStatement();
                 ResultSet rs = statement.executeQuery("select dbms_metadata.get_ddl( 'TABLE', '" + table.id().table() + "', '" + table.id().schema() + "' ) from dual")) {
 
@@ -216,15 +257,23 @@ public class OracleSnapshotChangeEventSource extends RelationalSnapshotChangeEve
             Object res = rs.getObject(1);
             String ddl = ((Clob) res).getSubString(1, (int) ((Clob) res).length());
 
-            return new SchemaChangeEvent(snapshotContext.offset.getPartition(), snapshotContext.offset.getOffset(), snapshotContext.catalogName,
-                    table.id().schema(), ddl, table, SchemaChangeEventType.CREATE, true);
+            return new SchemaChangeEvent(
+                    snapshotContext.offset.getPartition(),
+                    snapshotContext.offset.getOffset(),
+                    snapshotContext.offset.getSourceInfo(),
+                    snapshotContext.catalogName,
+                    table.id().schema(),
+                    ddl,
+                    table,
+                    SchemaChangeEventType.CREATE,
+                    true);
         }
     }
 
     @Override
-    protected Optional<String> getSnapshotSelect(SnapshotContext snapshotContext, TableId tableId) {
+    protected Optional<String> getSnapshotSelect(RelationalSnapshotContext snapshotContext, TableId tableId) {
         long snapshotOffset = (Long) snapshotContext.offset.getOffset().get("scn");
-        return Optional.of("SELECT * FROM " + tableId.schema() + "." + tableId.table() + " AS OF SCN " + snapshotOffset);
+        return Optional.of("SELECT * FROM " + quote(tableId) + " AS OF SCN " + snapshotOffset);
     }
 
     @Override
@@ -234,10 +283,14 @@ public class OracleSnapshotChangeEventSource extends RelationalSnapshotChangeEve
         }
     }
 
+    private static String quote(TableId tableId) {
+        return TableId.parse(tableId.schema() + "." + tableId.table(), true).toDoubleQuotedString();
+    }
+
     /**
      * Mutable context which is populated in the course of snapshotting.
      */
-    private static class OracleSnapshotContext extends SnapshotContext {
+    private static class OracleSnapshotContext extends RelationalSnapshotContext {
 
         private Savepoint preSchemaSnapshotSavepoint;
 

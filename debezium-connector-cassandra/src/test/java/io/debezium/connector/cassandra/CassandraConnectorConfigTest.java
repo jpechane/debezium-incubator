@@ -10,7 +10,9 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Properties;
 
 import org.junit.Test;
@@ -19,6 +21,7 @@ import io.confluent.kafka.serializers.AbstractKafkaAvroSerDeConfig;
 import io.debezium.config.Configuration;
 
 public class CassandraConnectorConfigTest {
+
     @Test
     public void testConfigs() {
         String connectorName = "test_connector";
@@ -108,9 +111,13 @@ public class CassandraConnectorConfigTest {
         config = buildTaskConfig(CassandraConnectorConfig.SNAPSHOT_POLL_INTERVAL_MS.name(), String.valueOf(snapshotPollIntervalMs));
         assertEquals(snapshotPollIntervalMs, config.snapshotPollIntervalMs().toMillis());
 
-        String fieldBlacklist = "keyspace1.table1.column1,keyspace1.table1.column2";
-        config = buildTaskConfig(CassandraConnectorConfig.FIELD_BLACKLIST.name(), fieldBlacklist);
-        assertArrayEquals(fieldBlacklist.split(","), config.fieldBlacklist());
+        String fieldExcludeList = "keyspace1.table1.column1,keyspace1.table1.column2";
+        List<String> fieldExcludeListExpected = Arrays.asList(fieldExcludeList.split(","));
+        config = buildTaskConfig(CassandraConnectorConfig.FIELD_EXCLUDE_LIST.name(), fieldExcludeList);
+        assertEquals(fieldExcludeListExpected, config.fieldExcludeList());
+
+        config = buildTaskConfig(CassandraConnectorConfig.FIELD_BLACKLIST.name(), fieldExcludeList);
+        assertEquals(fieldExcludeListExpected, config.fieldExcludeList());
 
         config = buildTaskConfig(CassandraConnectorConfig.TOMBSTONES_ON_DELETE.name(), "true");
         assertTrue(config.tombstonesOnDelete());
@@ -126,6 +133,9 @@ public class CassandraConnectorConfigTest {
         config = buildTaskConfig(CassandraConnectorConfig.COMMIT_LOG_POST_PROCESSING_ENABLED.name(), "false");
         assertEquals(false, config.postProcessEnabled());
 
+        config = buildTaskConfig(CassandraConnectorConfig.COMMIT_LOG_ERROR_REPROCESSING_ENABLED.name(), "true");
+        assertTrue(config.errorCommitLogReprocessEnabled());
+
         String transferClazz = "io.debezium.connector.cassandra.BlackHoleCommitLogTransfer";
         config = buildTaskConfig(CassandraConnectorConfig.COMMIT_LOG_TRANSFER_CLASS.name(), transferClazz);
         assertEquals(transferClazz, config.getCommitLogTransfer().getClass().getName());
@@ -140,7 +150,6 @@ public class CassandraConnectorConfigTest {
         String valueConverterClass = "org.apache.kafka.connect.json.JsonConverter";
         config = buildTaskConfig(CassandraConnectorConfig.VALUE_CONVERTER_CLASS_CONFIG.name(), valueConverterClass);
         assertEquals(valueConverterClass, config.getValueConverter().getClass().getName());
-
     }
 
     private CassandraConnectorConfig buildTaskConfigs(HashMap<String, Object> map) {
@@ -170,6 +179,7 @@ public class CassandraConnectorConfigTest {
         assertEquals(CassandraConnectorConfig.DEFAULT_CDC_DIR_POLL_INTERVAL_MS, config.cdcDirPollIntervalMs().toMillis());
         assertEquals(CassandraConnectorConfig.DEFAULT_SNAPSHOT_POLL_INTERVAL_MS, config.snapshotPollIntervalMs().toMillis());
         assertEquals(CassandraConnectorConfig.DEFAULT_COMMIT_LOG_POST_PROCESSING_ENABLED, config.postProcessEnabled());
+        assertEquals(CassandraConnectorConfig.DEFAULT_COMMIT_LOG_ERROR_REPROCESSING_ENABLED, config.errorCommitLogReprocessEnabled());
         assertEquals(CassandraConnectorConfig.DEFAULT_COMMIT_LOG_TRANSFER_CLASS, config.getCommitLogTransfer().getClass().getName());
         assertFalse(config.cassandraSslEnabled());
         assertFalse(config.tombstonesOnDelete());

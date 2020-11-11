@@ -9,10 +9,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import org.junit.Before;
+import org.junit.Rule;
+import org.junit.rules.TestRule;
 
 import io.debezium.config.Configuration;
 import io.debezium.config.Configuration.Builder;
 import io.debezium.connector.oracle.OracleConnectorConfig.SnapshotMode;
+import io.debezium.connector.oracle.junit.SkipTestDependingOnAdapterNameRule;
+import io.debezium.connector.oracle.junit.SkipWhenAdapterNameIs;
 import io.debezium.connector.oracle.util.TestHelper;
 import io.debezium.util.Testing;
 
@@ -21,7 +25,11 @@ import io.debezium.util.Testing;
  *
  * @author Jiri Pechanec
  */
+@SkipWhenAdapterNameIs(value = SkipWhenAdapterNameIs.AdapterName.LOGMINER, reason = "Implementation does not support creating/updating schema during streaming")
 public class StreamingDatatypesIT extends AbstractOracleDatatypesTest {
+
+    @Rule
+    public TestRule skipRule = new SkipTestDependingOnAdapterNameRule();
 
     @Before
     public void before() throws Exception {
@@ -36,20 +44,17 @@ public class StreamingDatatypesIT extends AbstractOracleDatatypesTest {
         start(OracleConnector.class, config);
         assertConnectorIsRunning();
 
-        // wait until snapshotting has completed
-        // TODO add hook to embedded engine to reliably do this
-        Thread.sleep(2000);
+        waitForSnapshotToBeCompleted(TestHelper.CONNECTOR_NAME, TestHelper.SERVER_NAME);
         createTables();
     }
 
     protected Builder connectorConfig() {
-        String whitelistedTables = getAllTables().stream()
-                .map(t -> "ORCLPDB1." + t)
+        String tableIncludeList = getAllTables().stream()
                 .map(t -> t.replaceAll("\\.", "\\\\."))
                 .collect(Collectors.joining(","));
 
         return TestHelper.defaultConfig()
-                .with(OracleConnectorConfig.TABLE_WHITELIST, whitelistedTables)
+                .with(OracleConnectorConfig.TABLE_INCLUDE_LIST, tableIncludeList)
                 .with(OracleConnectorConfig.SNAPSHOT_MODE, SnapshotMode.SCHEMA_ONLY);
     }
 

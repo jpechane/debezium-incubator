@@ -228,7 +228,7 @@ public abstract class AbstractOracleDatatypesTest extends AbstractConnectorTest 
     protected abstract Builder connectorConfig();
 
     private static void streamTable(String table) throws SQLException {
-        connection.execute("GRANT SELECT ON " + table + " to " + TestHelper.CONNECTOR_USER);
+        connection.execute("GRANT SELECT ON " + table + " to " + TestHelper.getConnectorUserName());
         connection.execute("ALTER TABLE " + table + " ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS");
     }
 
@@ -313,7 +313,7 @@ public abstract class AbstractOracleDatatypesTest extends AbstractConnectorTest 
         start(OracleConnector.class, config);
         assertConnectorIsRunning();
 
-        Thread.sleep(2000);
+        waitForSnapshotToBeCompleted(TestHelper.CONNECTOR_NAME, TestHelper.SERVER_NAME);
 
         int expectedRecordCount = 0;
 
@@ -356,7 +356,7 @@ public abstract class AbstractOracleDatatypesTest extends AbstractConnectorTest 
         start(OracleConnector.class, config);
         assertConnectorIsRunning();
 
-        Thread.sleep(2000);
+        waitForSnapshotToBeCompleted(TestHelper.CONNECTOR_NAME, TestHelper.SERVER_NAME);
 
         int expectedRecordCount = 0;
 

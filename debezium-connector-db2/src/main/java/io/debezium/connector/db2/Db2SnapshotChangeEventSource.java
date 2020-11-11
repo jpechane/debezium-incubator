@@ -32,12 +32,6 @@ public class Db2SnapshotChangeEventSource extends RelationalSnapshotChangeEventS
 
     private static final Logger LOGGER = LoggerFactory.getLogger(Db2SnapshotChangeEventSource.class);
 
-    /**
-     * Code 4096 corresponds to SNAPSHOT isolation level, which is not a part of the standard but SQL Server specific.
-     * Need to port this to DB2 (lga-zurich).
-     */
-    private static final int TRANSACTION_SNAPSHOT = 4096;
-
     private final Db2ConnectorConfig connectorConfig;
     private final Db2Connection jdbcConnection;
 
@@ -79,32 +73,24 @@ public class Db2SnapshotChangeEventSource extends RelationalSnapshotChangeEventS
     }
 
     @Override
-    protected void connectionCreated(SnapshotContext snapshotContext) throws Exception {
+    protected void connectionCreated(RelationalSnapshotContext snapshotContext) throws Exception {
         ((Db2SnapshotContext) snapshotContext).isolationLevelBeforeStart = jdbcConnection.connection().getTransactionIsolation();
-
-        if (connectorConfig.getSnapshotIsolationMode() == SnapshotIsolationMode.SNAPSHOT) {
-            // Terminate any transaction in progress so we can change the isolation level
-            jdbcConnection.connection().rollback();
-            // With one exception, you can switch from one isolation level to another at any time during a transaction.
-            // The exception occurs when changing from any isolation level to SNAPSHOT isolation.
-            // That is why SNAPSHOT isolation level has to be set at the very beginning of the transaction.
-            jdbcConnection.connection().setTransactionIsolation(TRANSACTION_SNAPSHOT);
-        }
     }
 
     @Override
-    protected Set<TableId> getAllTableIds(SnapshotContext ctx) throws Exception {
+    protected Set<TableId> getAllTableIds(RelationalSnapshotContext ctx) throws Exception {
         return jdbcConnection.readTableNames(null, null, null, new String[]{ "TABLE" });
     }
 
     @Override
-    protected void lockTablesForSchemaSnapshot(ChangeEventSourceContext sourceContext, SnapshotContext snapshotContext) throws SQLException, InterruptedException {
+    protected void lockTablesForSchemaSnapshot(ChangeEventSourceContext sourceContext, RelationalSnapshotContext snapshotContext)
+            throws SQLException, InterruptedException {
         if (connectorConfig.getSnapshotIsolationMode() == SnapshotIsolationMode.READ_UNCOMMITTED) {
             jdbcConnection.connection().setTransactionIsolation(Connection.TRANSACTION_READ_UNCOMMITTED);
             LOGGER.info("Schema locking was disabled in connector configuration");
         }
-        else if (connectorConfig.getSnapshotIsolationMode() == SnapshotIsolationMode.SNAPSHOT) {
-            // Snapshot transaction isolation level has already been set.
+        else if (connectorConfig.getSnapshotIsolationMode() == SnapshotIsolationMode.READ_COMMITTED) {
+            jdbcConnection.connection().setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
             LOGGER.info("Schema locking was disabled in connector configuration");
         }
         else if (connectorConfig.getSnapshotIsolationMode() == SnapshotIsolationMode.EXCLUSIVE
@@ -132,9 +118,9 @@ public class Db2SnapshotChangeEventSource extends RelationalSnapshotChangeEventS
     }
 
     @Override
-    protected void releaseSchemaSnapshotLocks(SnapshotContext snapshotContext) throws SQLException {
+    protected void releaseSchemaSnapshotLocks(RelationalSnapshotContext snapshotContext) throws SQLException {
         // Exclusive mode: locks should be kept until the end of transaction.
-        // read_uncommitted mode; snapshot mode: no locks have been acquired.
+        // read_uncommitted mode; read_committed mode: no locks have been acquired.
         if (connectorConfig.getSnapshotIsolationMode() == SnapshotIsolationMode.REPEATABLE_READ) {
             jdbcConnection.connection().rollback(((Db2SnapshotContext) snapshotContext).preSchemaSnapshotSavepoint);
             LOGGER.info("Schema locks released.");
@@ -142,7 +128,7 @@ public class Db2SnapshotChangeEventSource extends RelationalSnapshotChangeEventS
     }
 
     @Override
-    protected void determineSnapshotOffset(SnapshotContext ctx) throws Exception {
+    protected void determineSnapshotOffset(RelationalSnapshotContext ctx) throws Exception {
         ctx.offset = new Db2OffsetContext(
                 connectorConfig,
                 TxLogPosition.valueOf(jdbcConnection.getMaxLsn()),
@@ -151,7 +137,7 @@ public class Db2SnapshotChangeEventSource extends RelationalSnapshotChangeEventS
     }
 
     @Override
-    protected void readTableStructure(ChangeEventSourceContext sourceContext, SnapshotContext snapshotContext) throws SQLException, InterruptedException {
+    protected void readTableStructure(ChangeEventSourceContext sourceContext, RelationalSnapshotContext snapshotContext) throws SQLException, InterruptedException {
         Set<String> schemas = snapshotContext.capturedTables.stream()
                 .map(TableId::schema)
                 .collect(Collectors.toSet());
@@ -177,9 +163,16 @@ public class Db2SnapshotChangeEventSource extends RelationalSnapshotChangeEventS
     }
 
     @Override
-    protected SchemaChangeEvent getCreateTableEvent(SnapshotContext snapshotContext, Table table) throws SQLException {
-        return new SchemaChangeEvent(snapshotContext.offset.getPartition(), snapshotContext.offset.getOffset(), snapshotContext.catalogName,
-                table.id().schema(), null, table, SchemaChangeEventType.CREATE, true);
+    protected SchemaChangeEvent getCreateTableEvent(RelationalSnapshotContext snapshotContext, Table table) throws SQLException {
+        return new SchemaChangeEvent(
+                snapshotContext.offset.getPartition(),
+                snapshotContext.offset.getOffset(),
+                snapshotContext.offset.getSourceInfo(),
+                snapshotContext.catalogName,
+                table.id().schema(),
+                null,
+                table,
+                SchemaChangeEventType.CREATE, true);
     }
 
     @Override
@@ -199,14 +192,14 @@ public class Db2SnapshotChangeEventSource extends RelationalSnapshotChangeEventS
      * @return a valid query string
      */
     @Override
-    protected Optional<String> getSnapshotSelect(SnapshotContext snapshotContext, TableId tableId) {
+    protected Optional<String> getSnapshotSelect(RelationalSnapshotContext snapshotContext, TableId tableId) {
         return Optional.of(String.format("SELECT * FROM %s.%s", tableId.schema(), tableId.table()));
     }
 
     /**
      * Mutable context which is populated in the course of snapshotting.
      */
-    private static class Db2SnapshotContext extends SnapshotContext {
+    private static class Db2SnapshotContext extends RelationalSnapshotContext {
 
         private int isolationLevelBeforeStart;
         private Savepoint preSchemaSnapshotSavepoint;

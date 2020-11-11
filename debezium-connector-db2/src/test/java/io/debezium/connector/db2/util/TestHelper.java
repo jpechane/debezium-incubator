@@ -27,7 +27,6 @@ import io.debezium.config.Configuration;
 import io.debezium.connector.db2.Db2Connection;
 import io.debezium.connector.db2.Db2ConnectorConfig;
 import io.debezium.jdbc.JdbcConfiguration;
-import io.debezium.relational.RelationalDatabaseConnectorConfig;
 import io.debezium.relational.history.FileDatabaseHistory;
 import io.debezium.util.Clock;
 import io.debezium.util.Metronome;
@@ -42,7 +41,22 @@ public class TestHelper {
 
     public static final Path DB_HISTORY_PATH = Testing.Files.createTestingPath("file-db-history-connect.txt").toAbsolutePath();
     public static final String TEST_DATABASE = "testdb";
-    public static final int WAIT_FOR_CDC = 60 * 1000;
+    public static final int WAIT_FOR_CDC = 3 * 1000;
+
+    /**
+     * Key for schema parameter used to store a source column's type name.
+     */
+    public static final String TYPE_NAME_PARAMETER_KEY = "__debezium.source.column.type";
+
+    /**
+     * Key for schema parameter used to store a source column's type length.
+     */
+    public static final String TYPE_LENGTH_PARAMETER_KEY = "__debezium.source.column.length";
+
+    /**
+     * Key for schema parameter used to store a source column's type scale.
+     */
+    public static final String TYPE_SCALE_PARAMETER_KEY = "__debezium.source.column.scale";
 
     private static final String STATEMENTS_PLACEHOLDER = "#";
 
@@ -84,9 +98,10 @@ public class TestHelper {
         jdbcConfiguration.forEach(
                 (field, value) -> builder.with(Db2ConnectorConfig.DATABASE_CONFIG_PREFIX + field, value));
 
-        return builder.with(RelationalDatabaseConnectorConfig.SERVER_NAME, "testdb")
+        return builder.with(Db2ConnectorConfig.SERVER_NAME, "testdb")
                 .with(Db2ConnectorConfig.DATABASE_HISTORY, FileDatabaseHistory.class)
-                .with(FileDatabaseHistory.FILE_PATH, DB_HISTORY_PATH);
+                .with(FileDatabaseHistory.FILE_PATH, DB_HISTORY_PATH)
+                .with(Db2ConnectorConfig.INCLUDE_SCHEMA_CHANGES, false);
     }
 
     public static Db2Connection adminConnection() {
@@ -181,7 +196,7 @@ public class TestHelper {
                 Assert.fail("Snapshot was not completed on time");
             }
             try {
-                final boolean completed = (boolean) mbeanServer.getAttribute(new ObjectName("debezium.sql_server:type=connector-metrics,context=snapshot,server=server1"),
+                final boolean completed = (boolean) mbeanServer.getAttribute(new ObjectName("debezium.db2_server:type=connector-metrics,context=snapshot,server=testdb"),
                         "SnapshotCompleted");
                 if (completed) {
                     break;

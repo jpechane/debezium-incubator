@@ -40,6 +40,7 @@ import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.ListType;
 import org.apache.cassandra.db.marshal.LongType;
 import org.apache.cassandra.db.marshal.MapType;
+import org.apache.cassandra.db.marshal.ReversedType;
 import org.apache.cassandra.db.marshal.SetType;
 import org.apache.cassandra.db.marshal.ShortType;
 import org.apache.cassandra.db.marshal.SimpleDateType;
@@ -424,5 +425,44 @@ public class CassandraTypeDeserializerTest {
         Object deserializedUUID = CassandraTypeDeserializer.deserialize(UUIDType.instance, serializedUUID);
 
         Assert.assertEquals(expectedFixedUUID, deserializedUUID);
+    }
+
+    @Test
+    public void testReversedType() {
+        Date timestamp = new Date();
+        Long expectedLongTimestamp = timestamp.getTime();
+
+        ByteBuffer serializedTimestamp = TimestampType.instance.decompose(timestamp);
+
+        ReversedType<?> reversedTimeStampType = ReversedType.getInstance(TimestampType.instance);
+
+        Object deserializedTimestamp = CassandraTypeDeserializer.deserialize(reversedTimeStampType, serializedTimestamp);
+
+        Assert.assertEquals(expectedLongTimestamp, deserializedTimestamp);
+    }
+
+    @Test
+    public void testListUUIDType() {
+
+        List<UUID> originalList = new ArrayList<>();
+        UUID uuid1 = UUID.randomUUID();
+        UUID uuid2 = UUID.randomUUID();
+        UUID uuid3 = UUID.randomUUID();
+        originalList.add(uuid1);
+        originalList.add(uuid2);
+        originalList.add(uuid3);
+
+        List<String> expectedList = new ArrayList<>();
+        String expectedUuidStr1 = Values.convertToString(CassandraTypeKafkaSchemaBuilders.UUID_TYPE, UuidUtil.asBytes(uuid1));
+        String expectedUuidStr2 = Values.convertToString(CassandraTypeKafkaSchemaBuilders.UUID_TYPE, UuidUtil.asBytes(uuid2));
+        String expectedUuidStr3 = Values.convertToString(CassandraTypeKafkaSchemaBuilders.UUID_TYPE, UuidUtil.asBytes(uuid3));
+        expectedList.add(expectedUuidStr1);
+        expectedList.add(expectedUuidStr2);
+        expectedList.add(expectedUuidStr3);
+
+        ListType<UUID> frozenListType = ListType.getInstance(UUIDType.instance, false);
+        ByteBuffer serializedList = frozenListType.decompose(originalList);
+        Object deserializedList = CassandraTypeDeserializer.deserialize(frozenListType, serializedList);
+        Assert.assertEquals(expectedList, deserializedList);
     }
 }

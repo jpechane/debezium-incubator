@@ -13,6 +13,7 @@ import io.debezium.relational.HistorizedRelationalDatabaseSchema;
 import io.debezium.relational.Table;
 import io.debezium.relational.TableId;
 import io.debezium.relational.TableSchemaBuilder;
+import io.debezium.relational.Tables;
 import io.debezium.relational.ddl.DdlParser;
 import io.debezium.relational.history.TableChanges;
 import io.debezium.schema.SchemaChangeEvent;
@@ -35,10 +36,15 @@ public class OracleDatabaseSchema extends HistorizedRelationalDatabaseSchema {
                 new TableSchemaBuilder(
                         new OracleValueConverters(connectorConfig, connection),
                         schemaNameAdjuster,
+                        connectorConfig.customConverterRegistry(),
                         connectorConfig.getSourceInfoStructMaker().schema(),
                         connectorConfig.getSanitizeFieldNames()),
                 connectorConfig.getTablenameCaseInsensitive(),
                 connectorConfig.getKeyMapper());
+    }
+
+    public Tables getTables() {
+        return tables();
     }
 
     @Override

@@ -9,7 +9,6 @@ import java.sql.SQLException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import org.apache.kafka.connect.errors.ConnectException;
@@ -25,8 +24,8 @@ import io.debezium.pipeline.ChangeEventSourceCoordinator;
 import io.debezium.pipeline.DataChangeEvent;
 import io.debezium.pipeline.ErrorHandler;
 import io.debezium.pipeline.EventDispatcher;
+import io.debezium.pipeline.metrics.DefaultChangeEventSourceMetricsFactory;
 import io.debezium.pipeline.spi.OffsetContext;
-import io.debezium.relational.HistorizedRelationalDatabaseConnectorConfig;
 import io.debezium.relational.TableId;
 import io.debezium.relational.history.DatabaseHistory;
 import io.debezium.schema.TopicSelector;
@@ -45,21 +44,12 @@ public class Db2ConnectorTask extends BaseSourceTask {
     private static final Logger LOGGER = LoggerFactory.getLogger(Db2ConnectorTask.class);
     private static final String CONTEXT_NAME = "db2-server-connector-task";
 
-    private static enum State {
-        RUNNING,
-        STOPPED;
-    }
-
-    private final AtomicReference<State> state = new AtomicReference<State>(State.STOPPED);
-
     private volatile Db2TaskContext taskContext;
     private volatile ChangeEventQueue<DataChangeEvent> queue;
     private volatile Db2Connection dataConnection;
     private volatile Db2Connection metadataConnection;
-    private volatile ChangeEventSourceCoordinator coordinator;
     private volatile ErrorHandler errorHandler;
     private volatile Db2DatabaseSchema schema;
-    private volatile Map<String, ?> lastOffset;
 
     @Override
     public String version() {
@@ -67,12 +57,7 @@ public class Db2ConnectorTask extends BaseSourceTask {
     }
 
     @Override
-    public void start(Configuration config) {
-        if (!state.compareAndSet(State.STOPPED, State.RUNNING)) {
-            LOGGER.info("Connector has already been started");
-            return;
-        }
-
+    public ChangeEventSourceCoordinator start(Configuration config) {
         final Db2ConnectorConfig connectorConfig = new Db2ConnectorConfig(config);
         final TopicSelector<TableId> topicSelector = Db2TopicSelector.defaultSelector(connectorConfig);
         final SchemaNameAdjuster schemaNameAdjuster = SchemaNameAdjuster.create(LOGGER);
@@ -84,7 +69,7 @@ public class Db2ConnectorTask extends BaseSourceTask {
                 .build();
 
         final Configuration jdbcConfig = config.filter(
-                x -> !(x.startsWith(DatabaseHistory.CONFIGURATION_FIELD_PREFIX_STRING) || x.equals(HistorizedRelationalDatabaseConnectorConfig.DATABASE_HISTORY.name())))
+                x -> !(x.startsWith(DatabaseHistory.CONFIGURATION_FIELD_PREFIX_STRING) || x.equals(Db2ConnectorConfig.DATABASE_HISTORY.name())))
                 .subset("database.", true);
         dataConnection = new Db2Connection(jdbcConfig);
         metadataConnection = new Db2Connection(jdbcConfig);
@@ -114,7 +99,7 @@ public class Db2ConnectorTask extends BaseSourceTask {
                 .loggingContextSupplier(() -> taskContext.configureLoggingContext(CONTEXT_NAME))
                 .build();
 
-        errorHandler = new ErrorHandler(Db2Connector.class, connectorConfig.getLogicalName(), queue, this::cleanupResources);
+        errorHandler = new ErrorHandler(Db2Connector.class, connectorConfig.getLogicalName(), queue);
 
         final Db2EventMetadataProvider metadataProvider = new Db2EventMetadataProvider();
 
@@ -125,18 +110,22 @@ public class Db2ConnectorTask extends BaseSourceTask {
                 queue,
                 connectorConfig.getTableFilters().dataCollectionFilter(),
                 DataChangeEvent::new,
-                metadataProvider);
+                metadataProvider,
+                schemaNameAdjuster);
 
-        coordinator = new ChangeEventSourceCoordinator(
+        ChangeEventSourceCoordinator coordinator = new ChangeEventSourceCoordinator(
                 previousOffset,
                 errorHandler,
                 Db2Connector.class,
                 connectorConfig,
                 new Db2ChangeEventSourceFactory(connectorConfig, dataConnection, metadataConnection, errorHandler, dispatcher, clock, schema),
+                new DefaultChangeEventSourceMetricsFactory(),
                 dispatcher,
                 schema);
 
         coordinator.start(taskContext, this.queue, metadataProvider);
+
+        return coordinator;
     }
 
     /**
@@ -161,59 +150,18 @@ public class Db2ConnectorTask extends BaseSourceTask {
     }
 
     @Override
-    public List<SourceRecord> poll() throws InterruptedException {
+    public List<SourceRecord> doPoll() throws InterruptedException {
         final List<DataChangeEvent> records = queue.poll();
 
         final List<SourceRecord> sourceRecords = records.stream()
                 .map(DataChangeEvent::getRecord)
                 .collect(Collectors.toList());
 
-        if (!sourceRecords.isEmpty()) {
-            this.lastOffset = sourceRecords.get(sourceRecords.size() - 1).sourceOffset();
-        }
-
         return sourceRecords;
     }
 
     @Override
-    public void commit() throws InterruptedException {
-        if (coordinator != null) {
-            coordinator.commitOffset(lastOffset);
-        }
-    }
-
-    @Override
-    public void stop() {
-        cleanupResources();
-    }
-
-    private void cleanupResources() {
-        if (!state.compareAndSet(State.RUNNING, State.STOPPED)) {
-            LOGGER.info("Connector has already been stopped");
-            return;
-        }
-
-        try {
-            if (coordinator != null) {
-                coordinator.stop();
-            }
-        }
-        catch (InterruptedException e) {
-            Thread.interrupted();
-            LOGGER.error("Interrupted while stopping coordinator", e);
-            throw new ConnectException("Interrupted while stopping coordinator, failing the task");
-        }
-
-        try {
-            if (errorHandler != null) {
-                errorHandler.stop();
-            }
-        }
-        catch (InterruptedException e) {
-            Thread.interrupted();
-            LOGGER.error("Interrupted while stopping", e);
-        }
-
+    public void doStop() {
         try {
             if (dataConnection != null) {
                 dataConnection.close();

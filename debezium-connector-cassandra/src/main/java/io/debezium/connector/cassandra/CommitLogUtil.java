@@ -53,7 +53,7 @@ public final class CommitLogUtil {
         try {
             Matcher filenameMatcher = FILENAME_REGEX_PATTERN.matcher(file.getName());
             if (!filenameMatcher.matches()) {
-                throw new IllegalArgumentException("Cannot delete file beca use " + file.getName() + " does not appear to be a CommitLog");
+                throw new IllegalArgumentException("Cannot delete file because " + file.getName() + " does not appear to be a CommitLog");
             }
 
             Files.delete(file.toPath());
@@ -69,6 +69,10 @@ public final class CommitLogUtil {
      * If the directory does not contain any commit logs, an empty array is returned.
      */
     public static File[] getCommitLogs(File directory) {
+        if (!directory.isDirectory()) {
+            throw new IllegalArgumentException("Given directory does not exist: " + directory);
+        }
+
         return directory.listFiles(f -> f.isFile() && FILENAME_REGEX_PATTERN.matcher(f.getName()).matches());
     }
 

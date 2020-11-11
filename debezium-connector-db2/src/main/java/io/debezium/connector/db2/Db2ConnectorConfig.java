@@ -37,9 +37,11 @@ import io.debezium.relational.history.KafkaDatabaseHistory;
 /**
  * The list of configuration options for DB2 connector
  *
- * @author Jiri Pechanec
+ * @author Jiri Pechanec, Luis Garcés-Erice
  */
 public class Db2ConnectorConfig extends HistorizedRelationalDatabaseConnectorConfig {
+
+    protected static final int DEFAULT_PORT = 50000;
 
     /**
      * The set of predefined SnapshotMode options or aliases.
@@ -54,7 +56,7 @@ public class Db2ConnectorConfig extends HistorizedRelationalDatabaseConnectorCon
         /**
          * Perform a snapshot of the schema but no data upon initial startup of a connector.
          */
-        INITIAL_SCHEMA_ONLY("initial_schema_only", false);
+        SCHEMA_ONLY("schema_only", false);
 
         private final String value;
         private final boolean includeData;
@@ -118,6 +120,8 @@ public class Db2ConnectorConfig extends HistorizedRelationalDatabaseConnectorCon
 
     /**
      * The set of predefined snapshot isolation mode options.
+     * 
+     * https://www.ibm.com/support/knowledgecenter/en/SSEPGG_11.5.0/com.ibm.db2.luw.apdv.java.doc/src/tpc/imjcc_r0052429.html
      */
     public static enum SnapshotIsolationMode implements EnumeratedValue {
 
@@ -129,18 +133,19 @@ public class Db2ConnectorConfig extends HistorizedRelationalDatabaseConnectorCon
         EXCLUSIVE("exclusive"),
 
         /**
-         * This mode uses SNAPSHOT isolation level. This way reads and writes are not blocked for the entire duration
-         * of the snapshot.  Snapshot consistency is guaranteed as long as DDL statements are not executed at the time.
-         */
-        SNAPSHOT("snapshot"),
-
-        /**
          * This mode uses REPEATABLE READ isolation level. This mode will avoid taking any table
          * locks during the snapshot process, except schema snapshot phase where exclusive table
          * locks are acquired for a short period.  Since phantom reads can occur, it does not fully
          * guarantee consistency.
          */
         REPEATABLE_READ("repeatable_read"),
+
+        /**
+         * This mode uses READ COMMITTED isolation level. This mode does not take any table locks during
+         * the snapshot process. In addition, it does not take any long-lasting row-level locks, like
+         * in repeatable read isolation level. Snapshot consistency is not guaranteed.
+         */
+        READ_COMMITTED("read_committed"),
 
         /**
          * This mode uses READ UNCOMMITTED isolation level. This mode takes neither table locks nor row-level locks
@@ -195,6 +200,38 @@ public class Db2ConnectorConfig extends HistorizedRelationalDatabaseConnectorCon
         }
     }
 
+    public static final Field HOSTNAME = Field.create(DATABASE_CONFIG_PREFIX + JdbcConfiguration.HOSTNAME)
+            .withDisplayName("Hostname")
+            .withType(Type.STRING)
+            .withWidth(Width.MEDIUM)
+            .withImportance(Importance.HIGH)
+            .withValidation(Field::isRequired)
+            .withDescription("Resolvable hostname or IP address of the Db2 database server.");
+
+    public static final Field PORT = Field.create(DATABASE_CONFIG_PREFIX + JdbcConfiguration.PORT)
+            .withDisplayName("Port")
+            .withType(Type.INT)
+            .withWidth(Width.SHORT)
+            .withDefault(DEFAULT_PORT)
+            .withImportance(Importance.HIGH)
+            .withValidation(Field::isInteger)
+            .withDescription("Port of the Db2 database server.");
+
+    public static final Field USER = Field.create(DATABASE_CONFIG_PREFIX + JdbcConfiguration.USER)
+            .withDisplayName("User")
+            .withType(Type.STRING)
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.HIGH)
+            .withValidation(Field::isRequired)
+            .withDescription("Name of the Db2 database user to be used when connecting to the database.");
+
+    public static final Field PASSWORD = Field.create(DATABASE_CONFIG_PREFIX + JdbcConfiguration.PASSWORD)
+            .withDisplayName("Password")
+            .withType(Type.PASSWORD)
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.HIGH)
+            .withDescription("Password of the Db2 database user to be used when connecting to the database.");
+
     public static final Field SERVER_NAME = RelationalDatabaseConnectorConfig.SERVER_NAME
             .withValidation(CommonConnectorConfig::validateServerNameIsDifferentFromHistoryTopicName);
 
@@ -214,7 +251,7 @@ public class Db2ConnectorConfig extends HistorizedRelationalDatabaseConnectorCon
             .withDescription("The criteria for running a snapshot upon startup of the connector. "
                     + "Options include: "
                     + "'initial' (the default) to specify the connector should run a snapshot only when no offsets are available for the logical server name; "
-                    + "'initial_schema_only' to specify the connector should run a snapshot of the schema when no offsets are available for the logical server name. ");
+                    + "'schema_only' to specify the connector should run a snapshot of the schema when no offsets are available for the logical server name. ");
 
     public static final Field SNAPSHOT_ISOLATION_MODE = Field.create("snapshot.isolation.mode")
             .withDisplayName("Snapshot isolation mode")
@@ -226,8 +263,8 @@ public class Db2ConnectorConfig extends HistorizedRelationalDatabaseConnectorCon
                     + "', which means that repeatable read isolation level is used. In addition, exclusive locks are taken only during schema snapshot. "
                     + "Using a value of '" + SnapshotIsolationMode.EXCLUSIVE.getValue()
                     + "' ensures that the connector holds the exclusive lock (and thus prevents any reads and updates) for all monitored tables during the entire snapshot duration. "
-                    + "When '" + SnapshotIsolationMode.SNAPSHOT.getValue()
-                    + "' is specified, connector runs the initial snapshot in SNAPSHOT isolation level, which guarantees snapshot consistency. In addition, neither table nor row-level locks are held. "
+                    + "In '" + SnapshotIsolationMode.READ_COMMITTED.getValue()
+                    + "' mode no table locks or any *long-lasting* row-level locks are acquired, but connector does not guarantee snapshot consistency."
                     + "In '" + SnapshotIsolationMode.READ_UNCOMMITTED.getValue()
                     + "' mode neither table nor row-level locks are acquired, but connector does not guarantee snapshot consistency.");
 
@@ -235,15 +272,22 @@ public class Db2ConnectorConfig extends HistorizedRelationalDatabaseConnectorCon
      * The set of {@link Field}s defined as part of this configuration.
      */
     public static Field.Set ALL_FIELDS = Field.setOf(
+            HOSTNAME,
+            PORT,
+            USER,
+            PASSWORD,
             SERVER_NAME,
             DATABASE_NAME,
             SNAPSHOT_MODE,
             RelationalDatabaseConnectorConfig.SNAPSHOT_SELECT_STATEMENT_OVERRIDES_BY_TABLE,
             HistorizedRelationalDatabaseConnectorConfig.DATABASE_HISTORY,
             RelationalDatabaseConnectorConfig.TABLE_WHITELIST,
+            RelationalDatabaseConnectorConfig.TABLE_INCLUDE_LIST,
             RelationalDatabaseConnectorConfig.TABLE_BLACKLIST,
+            RelationalDatabaseConnectorConfig.TABLE_EXCLUDE_LIST,
             RelationalDatabaseConnectorConfig.TABLE_IGNORE_BUILTIN,
             RelationalDatabaseConnectorConfig.COLUMN_BLACKLIST,
+            RelationalDatabaseConnectorConfig.COLUMN_EXCLUDE_LIST,
             RelationalDatabaseConnectorConfig.DECIMAL_HANDLING_MODE,
             RelationalDatabaseConnectorConfig.TIME_PRECISION_MODE,
             CommonConnectorConfig.POLL_INTERVAL_MS,
@@ -252,22 +296,27 @@ public class Db2ConnectorConfig extends HistorizedRelationalDatabaseConnectorCon
             CommonConnectorConfig.SNAPSHOT_DELAY_MS,
             CommonConnectorConfig.SNAPSHOT_FETCH_SIZE,
             Heartbeat.HEARTBEAT_INTERVAL, Heartbeat.HEARTBEAT_TOPICS_PREFIX,
-            CommonConnectorConfig.SOURCE_STRUCT_MAKER_VERSION);
+            CommonConnectorConfig.SOURCE_STRUCT_MAKER_VERSION,
+            CommonConnectorConfig.EVENT_PROCESSING_FAILURE_HANDLING_MODE);
 
     public static ConfigDef configDef() {
         ConfigDef config = new ConfigDef();
 
-        Field.group(config, "DB2 Server", SERVER_NAME, DATABASE_NAME, SNAPSHOT_MODE);
+        Field.group(config, "DB2 Server", HOSTNAME, PORT, USER, PASSWORD, SERVER_NAME, DATABASE_NAME, SNAPSHOT_MODE);
         Field.group(config, "History Storage", KafkaDatabaseHistory.BOOTSTRAP_SERVERS,
                 KafkaDatabaseHistory.TOPIC, KafkaDatabaseHistory.RECOVERY_POLL_ATTEMPTS,
                 KafkaDatabaseHistory.RECOVERY_POLL_INTERVAL_MS, HistorizedRelationalDatabaseConnectorConfig.DATABASE_HISTORY);
         Field.group(config, "Events", RelationalDatabaseConnectorConfig.TABLE_WHITELIST,
+                RelationalDatabaseConnectorConfig.TABLE_INCLUDE_LIST,
                 RelationalDatabaseConnectorConfig.TABLE_BLACKLIST,
+                RelationalDatabaseConnectorConfig.TABLE_EXCLUDE_LIST,
                 RelationalDatabaseConnectorConfig.COLUMN_BLACKLIST,
+                RelationalDatabaseConnectorConfig.COLUMN_EXCLUDE_LIST,
                 RelationalDatabaseConnectorConfig.SNAPSHOT_SELECT_STATEMENT_OVERRIDES_BY_TABLE,
                 RelationalDatabaseConnectorConfig.TABLE_IGNORE_BUILTIN,
                 Heartbeat.HEARTBEAT_INTERVAL, Heartbeat.HEARTBEAT_TOPICS_PREFIX,
-                CommonConnectorConfig.SOURCE_STRUCT_MAKER_VERSION);
+                CommonConnectorConfig.SOURCE_STRUCT_MAKER_VERSION,
+                CommonConnectorConfig.EVENT_PROCESSING_FAILURE_HANDLING_MODE);
         Field.group(config, "Connector", CommonConnectorConfig.POLL_INTERVAL_MS, CommonConnectorConfig.MAX_BATCH_SIZE,
                 CommonConnectorConfig.MAX_QUEUE_SIZE, CommonConnectorConfig.SNAPSHOT_DELAY_MS, CommonConnectorConfig.SNAPSHOT_FETCH_SIZE,
                 RelationalDatabaseConnectorConfig.DECIMAL_HANDLING_MODE, RelationalDatabaseConnectorConfig.TIME_PRECISION_MODE);
@@ -281,12 +330,13 @@ public class Db2ConnectorConfig extends HistorizedRelationalDatabaseConnectorCon
     private final ColumnNameFilter columnFilter;
 
     public Db2ConnectorConfig(Configuration config) {
-        super(config, config.getString(SERVER_NAME), new SystemTablesPredicate(), x -> x.schema() + "." + x.table(), false);
+        super(Db2Connector.class, config, config.getString(SERVER_NAME), new SystemTablesPredicate(), x -> x.schema() + "." + x.table(), false);
 
         this.databaseName = config.getString(DATABASE_NAME);
         this.snapshotMode = SnapshotMode.parse(config.getString(SNAPSHOT_MODE), SNAPSHOT_MODE.defaultValueAsString());
         this.snapshotIsolationMode = SnapshotIsolationMode.parse(config.getString(SNAPSHOT_ISOLATION_MODE), SNAPSHOT_ISOLATION_MODE.defaultValueAsString());
-        this.columnFilter = getColumnNameFilter(config.getString(RelationalDatabaseConnectorConfig.COLUMN_BLACKLIST));
+        this.columnFilter = getColumnNameFilter(
+                config.getFallbackStringProperty(RelationalDatabaseConnectorConfig.COLUMN_EXCLUDE_LIST, RelationalDatabaseConnectorConfig.COLUMN_BLACKLIST));
     }
 
     private static ColumnNameFilter getColumnNameFilter(String excludedColumnPatterns) {
@@ -371,5 +421,10 @@ public class Db2ConnectorConfig extends HistorizedRelationalDatabaseConnectorCon
         }
 
         return Collections.unmodifiableMap(snapshotSelectOverridesByTable);
+    }
+
+    @Override
+    public String getConnectorName() {
+        return Module.name();
     }
 }
